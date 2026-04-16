@@ -182,13 +182,8 @@ bool doflow(void)
     ESP_LOGD(TAG, "doflow - start %s", zw_time.c_str());
     flowisrunning = true;
 
-    if (xSemaphoreTake(xFlowMutex, pdMS_TO_TICKS(30000)) == pdTRUE) {
-        flowctrl.doFlow(zw_time);
-        updateResultSnapshot();
-        xSemaphoreGive(xFlowMutex);
-    } else {
-        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "doflow: Failed to acquire xFlowMutex within 30s");
-    }
+    flowctrl.doFlow(zw_time);
+    updateResultSnapshot();
 
     flowisrunning = false;
 
@@ -538,24 +533,11 @@ esp_err_t handler_json(httpd_req_t *req)
                 httpd_resp_send(req, NULL, 0);
             }
         } else if (!resultSnapshot.valid) {
-            // First round not yet complete — try live
-            if (xSemaphoreTake(xFlowMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-                std::string zw = flowctrl.getJSON();
-                xSemaphoreGive(xFlowMutex);
-                if (zw.length() > 0) {
-                    httpd_resp_send(req, zw.c_str(), zw.length());
-                } else {
-                    httpd_resp_send(req, NULL, 0);
-                }
-            } else {
-                httpd_resp_set_status(req, "503 Service Unavailable");
-                httpd_resp_set_hdr(req, "Retry-After", "2");
-                httpd_resp_send(req, "{\"error\":\"Inference in progress, retry shortly\"}", HTTPD_RESP_USE_STRLEN);
-            }
+            httpd_resp_send(req, "{\"error\":\"First round not yet complete, please wait\"}", HTTPD_RESP_USE_STRLEN);
         } else {
             httpd_resp_set_status(req, "503 Service Unavailable");
-            httpd_resp_set_hdr(req, "Retry-After", "2");
-            httpd_resp_send(req, "{\"error\":\"Results being updated\"}", HTTPD_RESP_USE_STRLEN);
+            httpd_resp_set_hdr(req, "Retry-After", "1");
+            httpd_resp_send(req, "{\"error\":\"Results being updated, retry shortly\"}", HTTPD_RESP_USE_STRLEN);
         }
     }
     else
@@ -602,18 +584,18 @@ esp_err_t handler_openmetrics(httpd_req_t *req)
 
         const string metricNamePrefix = "ai_on_the_edge_device";
 
-        // get current measurement (flow) — use snapshot if available
+        // get current measurement (flow) — serve from snapshot only
         string response;
         if (resultSnapshot.valid && xSemaphoreTake(resultSnapshot.mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
             response = createSequenceMetrics(metricNamePrefix, flowctrl.getNumbers());
             xSemaphoreGive(resultSnapshot.mutex);
-        } else if (xSemaphoreTake(xFlowMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
-            response = createSequenceMetrics(metricNamePrefix, flowctrl.getNumbers());
-            xSemaphoreGive(xFlowMutex);
+        } else if (!resultSnapshot.valid) {
+            httpd_resp_send(req, "# First round not yet complete, please wait\n", HTTPD_RESP_USE_STRLEN);
+            return ESP_OK;
         } else {
             httpd_resp_set_status(req, "503 Service Unavailable");
-            httpd_resp_set_hdr(req, "Retry-After", "2");
-            httpd_resp_send(req, "Inference in progress, retry shortly", HTTPD_RESP_USE_STRLEN);
+            httpd_resp_set_hdr(req, "Retry-After", "1");
+            httpd_resp_send(req, "# Results being updated, retry shortly\n", HTTPD_RESP_USE_STRLEN);
             return ESP_OK;
         }
 
