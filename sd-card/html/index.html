@@ -259,11 +259,13 @@
             streamPopup.close();
 		}
 
+        var streamBase = window.location.protocol + '//' + window.location.hostname + ':81';
+
         if (streamFlashlight) {
-            streamPopup = window.open(getDomainname() + '/stream?flashlight=true','LivestreamWithlight',streamWindowFeatures);
+            streamPopup = window.open(streamBase + '/stream?flashlight=true','LivestreamWithlight',streamWindowFeatures);
 		}
         else {
-            streamPopup = window.open(getDomainname() + '/stream','Livestream',streamWindowFeatures);
+            streamPopup = window.open(streamBase + '/stream','Livestream',streamWindowFeatures);
 		}
 
         streamPopup.focus();

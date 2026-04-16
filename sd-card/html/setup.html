@@ -189,7 +189,7 @@ body, html {
             setupCompleted = false;
 
             setTimeout(function() {
-                document.getElementById('stream').src = getDomainname() + '/stream?flashlight=true';   // needs to be the last statement because it's kind of blocking
+                document.getElementById('stream').src = window.location.protocol + '//' + window.location.hostname + ':81/stream?flashlight=true';   // needs to be the last statement because it's kind of blocking
                 document.getElementById('stream').style.display = "";
             }, 500);
             break;
