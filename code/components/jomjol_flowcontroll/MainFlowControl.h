@@ -7,8 +7,11 @@
 #include <string>
 
 #include <esp_http_server.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
 #include "CImageBasis.h"
 #include "ClassFlowControll.h"
+#include "FlowResultSnapshot.h"
 #include "openmetrics.h"
 
 typedef struct
@@ -65,12 +68,14 @@ typedef struct
 
 extern camera_flow_config_temp_t CFstatus;
 extern ClassFlowControll flowctrl;
+extern SemaphoreHandle_t xFlowMutex;
 
 esp_err_t setCCstatusToCFstatus(void); // CCstatus >>> CFstatus
 esp_err_t setCFstatusToCCstatus(void); // CFstatus >>> CCstatus
 esp_err_t setCFstatusToCam(void);      // CFstatus >>> Kamera
 
 void register_server_main_flow_task_uri(httpd_handle_t server);
+esp_err_t start_stream_server(void);
 
 void CheckIsPlannedReboot(void);
 bool getIsPlannedReboot(void);

@@ -539,6 +539,8 @@ extern "C" void app_main(void)
     ESP_LOGD(TAG, "Before reg server main");
     register_server_main_uri(server, "/sdcard");
 
+    start_stream_server();
+
     // Only for testing purpose
     //setSystemStatusFlag(SYSTEM_STATUS_CAM_FB_BAD);
     //setSystemStatusFlag(SYSTEM_STATUS_PSRAM_BAD);

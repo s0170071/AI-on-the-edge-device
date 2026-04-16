@@ -99,7 +99,7 @@ static camera_config_t camera_config = {
     .frame_size = FRAMESIZE_VGA,    // QQVGA-UXGA Do not use sizes above QVGA when not JPEG
     // .frame_size = FRAMESIZE_UXGA,    //QQVGA-UXGA Do not use sizes above QVGA when not JPEG
     .jpeg_quality = 12,                 // 0-63 lower number means higher quality
-    .fb_count = 1,                     // Single buffer (PSRAM constrained)
+    .fb_count = 2,                     // Double buffer to reduce contention between flow task and web handlers
     .fb_location = CAMERA_FB_IN_PSRAM, /*!< The location where the frame buffer will be allocated */
     .grab_mode = CAMERA_GRAB_LATEST,   // only from new esp32cam version
 };

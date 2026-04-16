@@ -2,10 +2,14 @@
 #include "../../include/defines.h"
 #include "psram.h"
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/portmacro.h"
+
 static const char* TAG = "PSRAM";
 
 using namespace std;
 
+static portMUX_TYPE psramMux = portMUX_INITIALIZER_UNLOCKED;
 
 void *shared_region = NULL;
 uint32_t allocatedBytesForSTBI = 0;
@@ -35,15 +39,17 @@ bool reserve_psram_shared_region(void) {
  * Memory used in Take Image (STBI)
  *******************************************************************/
 bool psram_init_shared_memory_for_take_image_step(void) {
+    portENTER_CRITICAL(&psramMux);
     if (sharedMemoryInUseFor != "") {
         std::string inUse = sharedMemoryInUseFor;
-        
+        portEXIT_CRITICAL(&psramMux);
         LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + inUse + "!");
         return false;
     }
 
     allocatedBytesForSTBI = 0;
     sharedMemoryInUseFor = "TakeImage";
+    portEXIT_CRITICAL(&psramMux);
 
     return true;
 }
@@ -51,8 +57,10 @@ bool psram_init_shared_memory_for_take_image_step(void) {
 
 void psram_deinit_shared_memory_for_take_image_step(void) {
     LogFile.WriteToFile(ESP_LOG_DEBUG, TAG, "Deinit shared memory for step 'Take Image' (STBI buffers)");
+    portENTER_CRITICAL(&psramMux);
     allocatedBytesForSTBI = 0;
     sharedMemoryInUseFor = "";
+    portEXIT_CRITICAL(&psramMux);
 }
 
 
@@ -102,15 +110,16 @@ void psram_free_shared_stbi_memory(void *p) {
  * for the tmpImage. 
  *******************************************************************/
 void *psram_reserve_shared_tmp_image_memory(void) {
+    portENTER_CRITICAL(&psramMux);
     if (sharedMemoryInUseFor != "") {
         std::string inUse = sharedMemoryInUseFor;
-        
+        portEXIT_CRITICAL(&psramMux);
         LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + inUse + "!");
         return NULL;
     }
 
     sharedMemoryInUseFor = "Aligning";
-    
+    portEXIT_CRITICAL(&psramMux);
 
     LogFile.WriteToFile(ESP_LOG_DEBUG, TAG, "Allocating tmpImage (" + std::to_string(IMAGE_SIZE) + " bytes, use shared memory in PSRAM)...");
     return shared_region;
@@ -119,7 +128,9 @@ void *psram_reserve_shared_tmp_image_memory(void) {
 
 void psram_free_shared_temp_image_memory(void) {
     LogFile.WriteToFile(ESP_LOG_DEBUG, TAG, "Shared memory used for tmpImage (PSRAM, part of shared memory) is free again");
+    portENTER_CRITICAL(&psramMux);
     sharedMemoryInUseFor = "";
+    portEXIT_CRITICAL(&psramMux);
 }
 
 
@@ -132,14 +143,16 @@ void psram_free_shared_temp_image_memory(void) {
  * Tensor Arena. Therefore we do not need to monitor the usage.
  *******************************************************************/
 void *psram_get_shared_tensor_arena_memory(void) {
+    portENTER_CRITICAL(&psramMux);
     if ((sharedMemoryInUseFor == "") || (sharedMemoryInUseFor == "Digitization_Model")) {
         sharedMemoryInUseFor = "Digitization_Tensor";
+        portEXIT_CRITICAL(&psramMux);
         LogFile.WriteToFile(ESP_LOG_DEBUG, TAG, "Allocating Tensor Arena (" + std::to_string(TENSOR_ARENA_SIZE) + " bytes, use shared memory in PSRAM)...");
         return shared_region; // Use 1th part of the shared memory for Tensor
     }
     else {
         std::string inUse = sharedMemoryInUseFor;
-        
+        portEXIT_CRITICAL(&psramMux);
         LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + inUse + "!");
         return NULL;
     }
@@ -147,14 +160,16 @@ void *psram_get_shared_tensor_arena_memory(void) {
 
 
 void *psram_get_shared_model_memory(void) {
+    portENTER_CRITICAL(&psramMux);
     if ((sharedMemoryInUseFor == "") || (sharedMemoryInUseFor == "Digitization_Tensor")) {
         sharedMemoryInUseFor = "Digitization_Model";
+        portEXIT_CRITICAL(&psramMux);
         LogFile.WriteToFile(ESP_LOG_DEBUG, TAG, "Allocating Model memory (" + std::to_string(MAX_MODEL_SIZE) + " bytes, use shared memory in PSRAM)...");
         return (uint8_t *)shared_region + TENSOR_ARENA_SIZE; // Use 2nd part of the shared memory (after Tensor Arena) for the model
     }
     else {
         std::string inUse = sharedMemoryInUseFor;
-        
+        portEXIT_CRITICAL(&psramMux);
         LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + inUse + "!");
         return NULL;
     }
@@ -162,7 +177,9 @@ void *psram_get_shared_model_memory(void) {
 
 
 void psram_free_shared_tensor_arena_and_model_memory(void) {
+    portENTER_CRITICAL(&psramMux);
     sharedMemoryInUseFor = "";
+    portEXIT_CRITICAL(&psramMux);
     LogFile.WriteToFile(ESP_LOG_DEBUG, TAG, "Shared memory used for Tensor Arena and model (PSRAM, part of shared memory) is free again");
 }
 

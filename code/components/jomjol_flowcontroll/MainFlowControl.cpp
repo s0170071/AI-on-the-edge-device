@@ -19,6 +19,7 @@
 #include "ClassControllCamera.h"
 
 #include "ClassFlowControll.h"
+#include "FlowResultSnapshot.h"
 
 #include "ClassLogFile.h"
 #include "server_GPIO.h"
@@ -37,6 +38,9 @@
 
 ClassFlowControll flowctrl;
 camera_flow_config_temp_t CFstatus;
+FlowResultSnapshot resultSnapshot;
+SemaphoreHandle_t xFlowMutex = NULL;
+static httpd_handle_t stream_httpd = NULL;
 
 TaskHandle_t xHandletask_autodoFlow = NULL;
 
@@ -130,12 +134,62 @@ void doInit(void)
 #endif // ENABLE_MQTT
 }
 
+static void updateResultSnapshot(void)
+{
+    if (xSemaphoreTake(resultSnapshot.mutex, pdMS_TO_TICKS(5000)) != pdTRUE) {
+        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "updateResultSnapshot: mutex timeout");
+        return;
+    }
+
+    resultSnapshot.jsonCache = flowctrl.getJSON();
+    resultSnapshot.aktstatus = *flowctrl.getActStatus();
+    resultSnapshot.aktstatusWithTime = *flowctrl.getActStatusWithTime();
+    resultSnapshot.roundCount = countRounds;
+
+    // Cache readout variants
+    resultSnapshot.readoutValue = flowctrl.getReadout(false, false, 0);
+    resultSnapshot.readoutRawValue = flowctrl.getReadout(true, false, 0);
+    resultSnapshot.readoutNoError = flowctrl.getReadout(false, true, 0);
+    resultSnapshot.readoutAllValue = flowctrl.getReadoutAll(READOUT_TYPE_VALUE);
+    resultSnapshot.readoutAllPrevalue = flowctrl.getReadoutAll(READOUT_TYPE_PREVALUE);
+    resultSnapshot.readoutAllRaw = flowctrl.getReadoutAll(READOUT_TYPE_RAWVALUE);
+    resultSnapshot.readoutAllError = flowctrl.getReadoutAll(READOUT_TYPE_ERROR);
+
+    // Number results
+    resultSnapshot.numberResults.clear();
+    const std::vector<NumberPost*> &numbers = flowctrl.getNumbers();
+    for (size_t i = 0; i < numbers.size(); ++i) {
+        FlowResultSnapshot::NumberResult nr;
+        nr.name = numbers[i]->name;
+        nr.value = numbers[i]->ReturnValue;
+        nr.rawValue = numbers[i]->ReturnRawValue;
+        nr.preValue = numbers[i]->ReturnPreValue;
+        nr.error = numbers[i]->ErrorMessageText;
+        nr.rate = numbers[i]->ReturnRateValue;
+        nr.timestamp = numbers[i]->timeStamp;
+        resultSnapshot.numberResults.push_back(nr);
+    }
+
+    resultSnapshot.valid = true;
+    xSemaphoreGive(resultSnapshot.mutex);
+
+    LogFile.WriteToFile(ESP_LOG_DEBUG, TAG, "Result snapshot updated");
+}
+
 bool doflow(void)
 {
     std::string zw_time = getCurrentTimeString(LOGFILE_TIME_FORMAT);
     ESP_LOGD(TAG, "doflow - start %s", zw_time.c_str());
     flowisrunning = true;
-    flowctrl.doFlow(zw_time);
+
+    if (xSemaphoreTake(xFlowMutex, pdMS_TO_TICKS(30000)) == pdTRUE) {
+        flowctrl.doFlow(zw_time);
+        updateResultSnapshot();
+        xSemaphoreGive(xFlowMutex);
+    } else {
+        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "doflow: Failed to acquire xFlowMutex within 30s");
+    }
+
     flowisrunning = false;
 
 #ifdef DEBUG_DETAIL_ON
@@ -474,15 +528,34 @@ esp_err_t handler_json(httpd_req_t *req)
         httpd_resp_set_hdr(req, "Access-Control-Allow-Origin", "*");
         httpd_resp_set_type(req, "application/json");
 
-        std::string zw = flowctrl.getJSON();
+        if (resultSnapshot.valid && xSemaphoreTake(resultSnapshot.mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+            std::string json = resultSnapshot.jsonCache;
+            xSemaphoreGive(resultSnapshot.mutex);
 
-        if (zw.length() > 0)
-        {
-            httpd_resp_send(req, zw.c_str(), zw.length());
-        }
-        else
-        {
-            httpd_resp_send(req, NULL, 0);
+            if (json.length() > 0) {
+                httpd_resp_send(req, json.c_str(), json.length());
+            } else {
+                httpd_resp_send(req, NULL, 0);
+            }
+        } else if (!resultSnapshot.valid) {
+            // First round not yet complete — try live
+            if (xSemaphoreTake(xFlowMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+                std::string zw = flowctrl.getJSON();
+                xSemaphoreGive(xFlowMutex);
+                if (zw.length() > 0) {
+                    httpd_resp_send(req, zw.c_str(), zw.length());
+                } else {
+                    httpd_resp_send(req, NULL, 0);
+                }
+            } else {
+                httpd_resp_set_status(req, "503 Service Unavailable");
+                httpd_resp_set_hdr(req, "Retry-After", "2");
+                httpd_resp_send(req, "{\"error\":\"Inference in progress, retry shortly\"}", HTTPD_RESP_USE_STRLEN);
+            }
+        } else {
+            httpd_resp_set_status(req, "503 Service Unavailable");
+            httpd_resp_set_hdr(req, "Retry-After", "2");
+            httpd_resp_send(req, "{\"error\":\"Results being updated\"}", HTTPD_RESP_USE_STRLEN);
         }
     }
     else
@@ -529,8 +602,20 @@ esp_err_t handler_openmetrics(httpd_req_t *req)
 
         const string metricNamePrefix = "ai_on_the_edge_device";
 
-        // get current measurement (flow)
-        string response = createSequenceMetrics(metricNamePrefix, flowctrl.getNumbers());
+        // get current measurement (flow) — use snapshot if available
+        string response;
+        if (resultSnapshot.valid && xSemaphoreTake(resultSnapshot.mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+            response = createSequenceMetrics(metricNamePrefix, flowctrl.getNumbers());
+            xSemaphoreGive(resultSnapshot.mutex);
+        } else if (xSemaphoreTake(xFlowMutex, pdMS_TO_TICKS(500)) == pdTRUE) {
+            response = createSequenceMetrics(metricNamePrefix, flowctrl.getNumbers());
+            xSemaphoreGive(xFlowMutex);
+        } else {
+            httpd_resp_set_status(req, "503 Service Unavailable");
+            httpd_resp_set_hdr(req, "Retry-After", "2");
+            httpd_resp_send(req, "Inference in progress, retry shortly", HTTPD_RESP_USE_STRLEN);
+            return ESP_OK;
+        }
 
         // CPU Temperature
         response += createMetric(metricNamePrefix + "_cpu_temperature_celsius", "current cpu temperature in celsius", "gauge", std::to_string((int)temperatureRead())); 
@@ -641,7 +726,19 @@ esp_err_t handler_wasserzaehler(httpd_req_t *req)
                 _intype = READOUT_TYPE_ERROR;
             }
 
-            zw = flowctrl.getReadoutAll(_intype);
+            // Serve from snapshot if available
+            if (resultSnapshot.valid && xSemaphoreTake(resultSnapshot.mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+                switch (_intype) {
+                    case READOUT_TYPE_VALUE:    zw = resultSnapshot.readoutAllValue; break;
+                    case READOUT_TYPE_PREVALUE: zw = resultSnapshot.readoutAllPrevalue; break;
+                    case READOUT_TYPE_RAWVALUE: zw = resultSnapshot.readoutAllRaw; break;
+                    case READOUT_TYPE_ERROR:    zw = resultSnapshot.readoutAllError; break;
+                    default: zw = resultSnapshot.readoutAllValue; break;
+                }
+                xSemaphoreGive(resultSnapshot.mutex);
+            } else {
+                zw = flowctrl.getReadoutAll(_intype);
+            }
             ESP_LOGD(TAG, "ZW: %s", zw.c_str());
 
             if (zw.length() > 0)
@@ -652,7 +749,13 @@ esp_err_t handler_wasserzaehler(httpd_req_t *req)
             return ESP_OK;
         }
 
-        std::string *status = flowctrl.getActStatus();
+        std::string statusStr;
+        if (resultSnapshot.valid && xSemaphoreTake(resultSnapshot.mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+            statusStr = resultSnapshot.aktstatus;
+            xSemaphoreGive(resultSnapshot.mutex);
+        } else {
+            statusStr = *flowctrl.getActStatus();
+        }
         std::string query = std::string(_query);
         //    ESP_LOGD(TAG, "Query: %s, query.c_str());
 
@@ -661,10 +764,10 @@ esp_err_t handler_wasserzaehler(httpd_req_t *req)
             std::string txt;
             txt = "<body style=\"font-family: arial\">";
 
-            if ((countRounds <= 1) && (*status != std::string("Flow finished")))
+            if ((countRounds <= 1) && (statusStr != std::string("Flow finished")))
             {
                 // First round not completed yet
-                txt += "<h3>Please wait for the first round to complete!</h3><h3>Current state: " + *status + "</h3>\n";
+                txt += "<h3>Please wait for the first round to complete!</h3><h3>Current state: " + statusStr + "</h3>\n";
             }
             else
             {
@@ -674,7 +777,18 @@ esp_err_t handler_wasserzaehler(httpd_req_t *req)
             httpd_resp_sendstr_chunk(req, txt.c_str());
         }
 
-        zw = flowctrl.getReadout(_rawValue, _noerror, 0);
+        // Serve readout from snapshot if available
+        if (resultSnapshot.valid && xSemaphoreTake(resultSnapshot.mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+            if (_rawValue)
+                zw = resultSnapshot.readoutRawValue;
+            else if (_noerror)
+                zw = resultSnapshot.readoutNoError;
+            else
+                zw = resultSnapshot.readoutValue;
+            xSemaphoreGive(resultSnapshot.mutex);
+        } else {
+            zw = flowctrl.getReadout(_rawValue, _noerror, 0);
+        }
 
         if (zw.length() > 0)
         {
@@ -685,7 +799,7 @@ esp_err_t handler_wasserzaehler(httpd_req_t *req)
         {
             std::string txt, zw;
 
-            if ((countRounds <= 1) && (*status != std::string("Flow finished")))
+            if ((countRounds <= 1) && (statusStr != std::string("Flow finished")))
             {
                 // First round not completed yet
                 // Nothing to do
@@ -770,11 +884,11 @@ esp_err_t handler_wasserzaehler(httpd_req_t *req)
                  * Only show it after the image got taken */
                 txt = "<hr><h3>Full Image (current round)</h3>\n";
 
-                if ((*status == std::string("Initialization")) ||
-                    (*status == std::string("Initialization (delayed)")) ||
-                    (*status == std::string("Take Image")))
+                if ((statusStr == std::string("Initialization")) ||
+                    (statusStr == std::string("Initialization (delayed)")) ||
+                    (statusStr == std::string("Take Image")))
                 {
-                    txt += "<p>Current state: " + *status + "</p>\n";
+                    txt += "<p>Current state: " + statusStr + "</p>\n";
                 }
                 else
                 {
@@ -1446,10 +1560,15 @@ esp_err_t handler_statusflow(httpd_req_t *req)
         ESP_LOGD(TAG, "handler_statusflow: %s", req->uri);
 #endif
 
-        string *zw = flowctrl.getActStatusWithTime();
-        resp_str = zw->c_str();
-
-        httpd_resp_send(req, resp_str, HTTPD_RESP_USE_STRLEN);
+        std::string status;
+        if (resultSnapshot.valid && xSemaphoreTake(resultSnapshot.mutex, pdMS_TO_TICKS(200)) == pdTRUE) {
+            status = resultSnapshot.aktstatusWithTime;
+            xSemaphoreGive(resultSnapshot.mutex);
+        } else {
+            string *zw = flowctrl.getActStatusWithTime();
+            status = *zw;
+        }
+        httpd_resp_send(req, status.c_str(), HTTPD_RESP_USE_STRLEN);
     }
     else
     {
@@ -1763,6 +1882,15 @@ void InitializeFlowTask(void)
 {
     BaseType_t xReturned;
 
+    // Create flow mutex before task starts
+    if (xFlowMutex == NULL) {
+        xFlowMutex = xSemaphoreCreateMutex();
+        if (xFlowMutex == NULL) {
+            LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Failed to create xFlowMutex!");
+            return;
+        }
+    }
+
     ESP_LOGD(TAG, "getESPHeapInfo: %s", getESPHeapInfo().c_str());
 
     uint32_t stackSize = 16 * 1024;
@@ -1879,10 +2007,7 @@ void register_server_main_flow_task_uri(httpd_handle_t server)
     camuri.user_ctx = (void *)"Heap";
     httpd_register_uri_handler(server, &camuri);
 
-    camuri.uri = "/stream";
-    camuri.handler = APPLY_BASIC_AUTH_FILTER(handler_stream);
-    camuri.user_ctx = (void *)"stream";
-    httpd_register_uri_handler(server, &camuri);
+    // Stream now served on separate httpd (port 81) — see start_stream_server()
 
     /** will handle metrics requests */
     camuri.uri = "/metrics";
@@ -1891,4 +2016,37 @@ void register_server_main_flow_task_uri(httpd_handle_t server)
     httpd_register_uri_handler(server, &camuri);
 
     /** when adding a new handler, make sure to increment the value for config.max_uri_handlers in `main/server_main.cpp` */
+}
+
+esp_err_t start_stream_server(void)
+{
+    httpd_config_t config = HTTPD_DEFAULT_CONFIG();
+    config.task_priority = tskIDLE_PRIORITY + 2;
+    config.stack_size = 8192;
+    config.core_id = 1;
+    config.server_port = 81;
+    config.ctrl_port = 32769;
+    config.max_open_sockets = 2;
+    config.max_uri_handlers = 2;
+    config.lru_purge_enable = true;
+    config.recv_wait_timeout = 5;
+    config.send_wait_timeout = 5;
+    config.uri_match_fn = httpd_uri_match_wildcard;
+
+    esp_err_t ret = httpd_start(&stream_httpd, &config);
+    if (ret != ESP_OK) {
+        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Failed to start stream httpd on port 81");
+        return ret;
+    }
+
+    httpd_uri_t stream_uri = {
+        .uri       = "/stream",
+        .method    = HTTP_GET,
+        .handler   = handler_stream,
+        .user_ctx  = NULL
+    };
+    httpd_register_uri_handler(stream_httpd, &stream_uri);
+
+    LogFile.WriteToFile(ESP_LOG_INFO, TAG, "Stream server started on port 81");
+    return ESP_OK;
 }
