@@ -362,6 +362,10 @@ esp_err_t img_tmp_virtual_handler(httpd_req_t *req)
     if (ESP_OK == GetJPG(filetosend, req))
         return ESP_OK;
 
+    // Processed image not available — fall back to raw camera image
+    if (ESP_OK == GetRawJPG(req))
+        return ESP_OK;
+
     #ifdef DEBUG_DETAIL_ON      
         LogFile.WriteHeapInfo("img_tmp_virtual_handler - Done");   
     #endif

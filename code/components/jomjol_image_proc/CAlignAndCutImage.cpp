@@ -20,8 +20,6 @@ CAlignAndCutImage::CAlignAndCutImage(std::string _name, CImageBasis *_org, CImag
     bpp = _org->bpp;
     externalImage = true;   
 
-    islocked = false; 
-
     ImageTMP = _temp;
 }
 

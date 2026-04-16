@@ -666,6 +666,7 @@ void doRebootOTA()
 }
 
 
+
 esp_err_t handler_reboot(httpd_req_t *req)
 {
     #ifdef DEBUG_DETAIL_ON     
@@ -714,5 +715,4 @@ void register_server_ota_sdcard_uri(httpd_handle_t server)
     camuri.handler = APPLY_BASIC_AUTH_FILTER(handler_reboot);
     camuri.user_ctx  = (void*) "Reboot";    
     httpd_register_uri_handler(server, &camuri);
-
 }

@@ -36,11 +36,12 @@ bool reserve_psram_shared_region(void) {
  *******************************************************************/
 bool psram_init_shared_memory_for_take_image_step(void) {
     if (sharedMemoryInUseFor != "") {
-        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + sharedMemoryInUseFor + "!");
+        std::string inUse = sharedMemoryInUseFor;
+        
+        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + inUse + "!");
         return false;
     }
 
-    LogFile.WriteToFile(ESP_LOG_DEBUG, TAG, "Init shared memory for step 'Take Image' (STBI buffers)");
     allocatedBytesForSTBI = 0;
     sharedMemoryInUseFor = "TakeImage";
 
@@ -102,13 +103,17 @@ void psram_free_shared_stbi_memory(void *p) {
  *******************************************************************/
 void *psram_reserve_shared_tmp_image_memory(void) {
     if (sharedMemoryInUseFor != "") {
-        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + sharedMemoryInUseFor + "!");
+        std::string inUse = sharedMemoryInUseFor;
+        
+        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + inUse + "!");
         return NULL;
     }
 
-    LogFile.WriteToFile(ESP_LOG_DEBUG, TAG, "Allocating tmpImage (" + std::to_string(IMAGE_SIZE) + " bytes, use shared memory in PSRAM)...");
     sharedMemoryInUseFor = "Aligning";
-    return shared_region; // Use 1th part of the shared memory for the tmpImage (only user)
+    
+
+    LogFile.WriteToFile(ESP_LOG_DEBUG, TAG, "Allocating tmpImage (" + std::to_string(IMAGE_SIZE) + " bytes, use shared memory in PSRAM)...");
+    return shared_region;
 }
 
 
@@ -133,7 +138,9 @@ void *psram_get_shared_tensor_arena_memory(void) {
         return shared_region; // Use 1th part of the shared memory for Tensor
     }
     else {
-        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + sharedMemoryInUseFor + "!");
+        std::string inUse = sharedMemoryInUseFor;
+        
+        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + inUse + "!");
         return NULL;
     }
 }
@@ -146,7 +153,9 @@ void *psram_get_shared_model_memory(void) {
         return (uint8_t *)shared_region + TENSOR_ARENA_SIZE; // Use 2nd part of the shared memory (after Tensor Arena) for the model
     }
     else {
-        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + sharedMemoryInUseFor + "!");
+        std::string inUse = sharedMemoryInUseFor;
+        
+        LogFile.WriteToFile(ESP_LOG_ERROR, TAG, "Shared memory in PSRAM already in use for " + inUse + "!");
         return NULL;
     }
 }

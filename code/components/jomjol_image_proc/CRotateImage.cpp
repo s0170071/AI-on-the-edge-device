@@ -14,7 +14,6 @@ CRotateImage::CRotateImage(std::string _name, CImageBasis *_org, CImageBasis *_t
     externalImage = true;   
     ImageTMP = _temp;   
     ImageOrg = _org; 
-    islocked = false;
     doflip = _flip;
 }
 

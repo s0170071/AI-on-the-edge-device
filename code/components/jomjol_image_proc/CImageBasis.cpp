@@ -27,31 +27,17 @@ bool jpgFileTooLarge = false;   // JPG creation verfication
 
 uint8_t * CImageBasis::RGBImageLock(int _waitmaxsec)
 {
-    if (islocked)
-    {
-        #ifdef DEBUG_DETAIL_ON   
-                ESP_LOGD(TAG, "Image is locked: sleep for: %ds", _waitmaxsec);
-        #endif
-        TickType_t xDelay;
-        xDelay = 1000 / portTICK_PERIOD_MS;
-        for (int i = 0; i <= _waitmaxsec; ++i)
-        {
-            vTaskDelay( xDelay ); 
-            if (!islocked)
-                break;
-        }
+    if (xSemaphoreTakeRecursive(imageMutex, pdMS_TO_TICKS(_waitmaxsec * 1000)) == pdTRUE) {
+        return rgb_image;
     }
 
-    if (islocked)
-        return NULL;
-
-    return rgb_image;
+    return NULL;
 }
 
 
 void CImageBasis::RGBImageRelease()
 {
-    islocked = false;
+    xSemaphoreGiveRecursive(imageMutex);
 }
 
 
@@ -369,7 +355,7 @@ CImageBasis::CImageBasis(string _name)
     width = 0;
     height = 0;
     channels = 0;    
-    islocked = false;
+    imageMutex = xSemaphoreCreateRecursiveMutex();
 }
 
 
@@ -500,7 +486,7 @@ void CImageBasis::crop_image(unsigned short cropLeft, unsigned short cropRight, 
 CImageBasis::CImageBasis(string _name, CImageBasis *_copyfrom) 
 {
     name = _name;
-    islocked = false;
+    imageMutex = xSemaphoreCreateRecursiveMutex();
     externalImage = false;
     channels = _copyfrom->channels;
     width = _copyfrom->width;
@@ -543,7 +529,7 @@ CImageBasis::CImageBasis(string _name, CImageBasis *_copyfrom)
 CImageBasis::CImageBasis(string _name, int _width, int _height, int _channels)
 {
     name = _name;
-    islocked = false;
+    imageMutex = xSemaphoreCreateRecursiveMutex();
     externalImage = false;
     channels = _channels;
     width = _width;
@@ -579,7 +565,7 @@ CImageBasis::CImageBasis(string _name, int _width, int _height, int _channels)
 CImageBasis::CImageBasis(string _name, std::string _image)
 {
     name = _name;
-    islocked = false;
+    imageMutex = xSemaphoreCreateRecursiveMutex();
     channels = 3;
     externalImage = false;
     filename = _image;
@@ -626,7 +612,7 @@ bool CImageBasis::ImageOkay(){
 CImageBasis::CImageBasis(string _name, uint8_t* _rgb_image, int _channels, int _width, int _height, int _bpp)
 {
     name = _name;
-    islocked = false;
+    imageMutex = xSemaphoreCreateRecursiveMutex();
     rgb_image = _rgb_image;
     channels = _channels;
     width = _width;
@@ -693,6 +679,7 @@ CImageBasis::~CImageBasis()
     }
 
     RGBImageRelease();
+    vSemaphoreDelete(imageMutex);
 }
 
 

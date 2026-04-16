@@ -8,6 +8,7 @@
 
 #include <iomanip>
 #include <sstream>
+#include <atomic>
 
 #include "../../include/defines.h"
 #include "Helper.h"
@@ -40,12 +41,12 @@ camera_flow_config_temp_t CFstatus;
 TaskHandle_t xHandletask_autodoFlow = NULL;
 
 bool bTaskAutoFlowCreated = false;
-bool flowisrunning = false;
+std::atomic<bool> flowisrunning{false};
 
 long auto_interval = 0;
 bool autostartIsEnabled = false;
 
-int countRounds = 0;
+std::atomic<int> countRounds{0};
 bool isPlannedReboot = false;
 
 static const char *TAG = "MAINCTRL";
@@ -474,6 +475,7 @@ esp_err_t handler_json(httpd_req_t *req)
         httpd_resp_set_type(req, "application/json");
 
         std::string zw = flowctrl.getJSON();
+
         if (zw.length() > 0)
         {
             httpd_resp_send(req, zw.c_str(), zw.length());

@@ -7,6 +7,9 @@
 #include <string>
 #include <esp_http_server.h>
 
+#include "freertos/FreeRTOS.h"
+#include "freertos/semphr.h"
+
 #include "../../include/defines.h"
 
 #include <math.h>
@@ -36,7 +39,7 @@ class CImageBasis
         void memCopy(uint8_t* _source, uint8_t* _target, int _size);
         bool isInImage(int x, int y);
 
-        bool islocked;
+        SemaphoreHandle_t imageMutex;
 
     public:
         uint8_t* rgb_image = NULL;

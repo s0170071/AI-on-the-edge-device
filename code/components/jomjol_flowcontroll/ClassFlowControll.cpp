@@ -805,8 +805,7 @@ esp_err_t ClassFlowControll::GetJPGStream(std::string _fn, httpd_req_t *req)
                         _send = flowalignment->ImageBasis;
                     }
                     else {
-                        httpd_resp_send(req, NULL, 0);
-                        return ESP_OK;
+                        return ESP_FAIL;
                     }
                 }
             }
@@ -821,15 +820,13 @@ esp_err_t ClassFlowControll::GetJPGStream(std::string _fn, httpd_req_t *req)
                         _send = flowalignment->ImageBasis;
                     }
                     else {
-                        httpd_resp_send(req, NULL, 0);
-                        return ESP_OK;
+                        return ESP_FAIL;
                     }
                 }
             }
         #else
             if (!flowalignment) {
                 ESP_LOGD(TAG, "ClassFloDControll::GetJPGStream: FlowAlignment is not (yet) initialized. Interrupt serving!");
-                httpd_resp_send(req, NULL, 0);
                 return ESP_FAIL;
             }
 
